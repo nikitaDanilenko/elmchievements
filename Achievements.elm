@@ -4,8 +4,11 @@ import Html exposing             ( Html, div, input, text, button )
 import Html.Attributes exposing  ( placeholder )
 import Html.Events exposing      ( onInput, onClick )
 import Http exposing             ( Error, send, get, Request, emptyBody )
-import Json.Decode exposing      ( at, int, field, list, map, map2 )
+import Json.Decode exposing      ( at, int, field, string, list, map, map2 )
 import List exposing             ( length, foldr )
+import Task exposing             ( perform, sequence, Task )
+
+import Auxiliaries exposing      ( catMaybes ) 
 
 main =
   Html.program
@@ -34,7 +37,8 @@ type alias Game =
     {
         name : String,
         timePlayed : Int,
-        achievements : List Achievement
+        achievementsObtained : Int,
+        achievementsObtainable : Int
     }
 
 type Achievement = Achievement { label : String, unlocked : Bool }
@@ -77,7 +81,8 @@ update msg model = case msg of
   Fetch     -> (model, fetchGames model.key model.user)
   Games gs  -> ({ model | games = gs }, Cmd.none)
   FetchCollection (Err err) -> ({ model | errorMsg = toString err }, Cmd.none)
-  FetchCollection (Ok (n, gs)) -> (model, processGames model.key model.user n gs) 
+  FetchCollection (Ok (n, gs)) -> ({ model | numberOfGames = n, listOfGames = gs }, 
+                                    processGames model.key model.user n gs) 
     --process model response
 
 process : Model -> Result Http.Error String -> (Model, Cmd Msg)
@@ -87,65 +92,110 @@ process model result = case result of
 
 fetchGames : Key -> User -> Cmd Msg
 fetchGames key user = 
-  let query = String.concat [
-                  ownedQuery, "key=", key, 
-                  "&steamID=", user, 
-                  "&", includeFree, 
-                  "&format=json"
+  let query = combineToAddress ownedQuery [
+                  mkKeyString key, 
+                  mkUserString user, 
+                  includeFree, 
+                  jsonFormat
               ]
 
-      appidPlaytime = map2 (,) (field "appid" int) (field "playtime_forever" int)
+      appidPlaytime     = map2 (,) (field "appid" int)      (field "playtime_forever" int)
       gameCountAndGames = map2 (,) (field "game_count" int) (field "games" (list appidPlaytime))
       request = get query (field "response" gameCountAndGames)
 
   in Http.send FetchCollection request
 
+-- Make a query to find out the general stats of any game.
+mkGameStatsQuery : Key -> Id -> String
+mkGameStatsQuery key gameId = combineToAddress schemaQuery [ mkKeyString key, mkAppString gameId ]
+
+mkUserStatsQuery : Key -> User -> Id -> String
+mkUserStatsQuery key user gameId =
+  combineToAddress userStatsQuery 
+                   [ mkAppString gameId, mkKeyString key, mkUserString user, jsonFormat ]
+
+mkAppString : Id -> String
+mkAppString gameId = String.concat [ appParam, toString gameId ]
+
+mkKeyString : Key -> String
+mkKeyString key = String.concat [ keyParam, key ]
+
+mkUserString : User -> String
+mkUserString user = String.concat [ userParam, user ]
+
+{- Create a full address by interspersing ampersands and prepending the server label to
+   the given list of strings. -}
+combineToAddress : String -> List String -> String
+combineToAddress initial strs = prependServer (String.concat (initial :: List.intersperse "&" strs))
+
+{- Flatten a list of results to a result list. All failures are removed, so that
+   the result of this function is the list of those results that are "Ok". -}
+flattenResults : List (Result e r) -> List r
+flattenResults = catMaybes << List.map Result.toMaybe
+
+processGames : Key -> User -> Int -> List (Id, Minutes) -> Cmd (List Game)
+processGames key user n gs = 
+  let f : Id -> Minutes -> Task Never (Maybe Game)
+      f gameId time =
+        let cmdAchNum = Http.toTask (fetchAchievementNumber key gameId)
+            cmdGame = Http.toTask (fetchAchievementsPerGame key user gameId)
+        in Task.onError (always (Task.succeed Nothing))
+                        (Task.map2 (\an (name, got) -> Just (Game name time got an)) 
+                                    cmdAchNum cmdGame)
+      games {-: Task Never (List (Maybe Game)) -} = Task.sequence (List.map (uncurry f) gs)
+  in Task.perform catMaybes games
+
+{- Fetch the number of achievements a game has. If the game has achievements, the number of
+   achievements is returned as a Just, otherwise Nothing is returned. -}
+fetchAchievementNumber : Key -> Id -> Http.Request Int
+fetchAchievementNumber key gameId = 
+  let query = mkGameStatsQuery key gameId
+      numOfAchs = Json.Decode.map length (at [ "game", "availableGameStats", "achievements" ] 
+                             (list (field "defaultvalue" int)))
+  in get query numOfAchs
+
 --ISteamUserStats/GetPlayerAchievements/v0001/?appid=244160&key=E35E070CB613BE0E1AF09F834BF66F23&steamid=76561197986952100
 --ISteamUserStats/GetSchemaForGame/v2/?key=E35E070CB613BE0E1AF09F834BF66F23&appid=244160
 
--- Make a query to find out the general stats of any game.
-mkGameStatsQuery : Id -> Key -> String
-mkGameStatsQuery gameId key = String.concat [ server, schemaQuery, key, "&appid=", toString gameId ] 
+fetchAchievementsPerGame : Key -> User -> Id -> Http.Request (String, Int)
+fetchAchievementsPerGame key user gameId =
+  let query = mkUserStatsQuery key user gameId
 
-{- Flatten a list of results to a result list. All failures are removed, so that
-   the result of this function is "Ok" when one of the input Results is "Ok".
--}
-flattenResults : List (Result e r) -> Result e (List r)
-flattenResults = 
-  let f r = case r of
-                Err _ -> identity
-                Ok x  -> Result.map ((::) x)
-  in foldr f (Ok [])
+      decodeNameLength = field "playerstats" parts
+      parts = map2 (,) (field "gameName" string) 
+                       (Json.Decode.map length (field "achievements" (list (field "achieved" int))))
+  in get query decodeNameLength
 
-processGames : Key -> User -> Int -> List (Id, Int) -> Cmd Msg
-processGames key user n gs = Cmd.none
-
-fetchAchievementNumber : Key -> User -> Id -> Int -> Cmd (Maybe Int)
-fetchAchievementNumber key user gameId timePlayed = 
-  let query = mkGameStatsQuery gameId key
-      numOfAchs = Json.Decode.map length (at [ "game", "availableGameStats", "achievements" ] 
-                             (list (field "defaultvalue" int)))
-      request = get query numOfAchs
-
-  in Http.send Result.toMaybe request
-
+{- The server to query for the Steam API. -}
 server : String
 server = "http://localhost:80/steam/"
+
+keyParam : String
+keyParam = "key="
+
+userParam : String
+userParam = "steamID="
+
+appParam : String
+appParam = "appid="
+
+jsonFormat : String
+jsonFormat = "format=json"
 
 prependServer : String -> String
 prependServer str = String.concat [ server, str ]
 
 ownedQuery: String
-ownedQuery = prependServer "IPlayerService/GetOwnedGames/v0001/?"
+ownedQuery = "IPlayerService/GetOwnedGames/v0001/?"
 
 userStatsQuery : String
-userStatsQuery = prependServer "ISteamUserStats/GetUserStatsForGame/v0002/?appid="
+userStatsQuery = "ISteamUserStats/GetUserStatsForGame/v0002/?"
 
 schemaQuery : String
-schemaQuery = prependServer "ISteamUserStats/GetSchemaForGame/v2/?key="
+schemaQuery = "ISteamUserStats/GetSchemaForGame/v2/?"
 
 recentQuery : String
-recentQuery = prependServer "IPlayerService/GetRecentlyPlayedGames/v0001/?"
+recentQuery = "IPlayerService/GetRecentlyPlayedGames/v0001/?"
 
 includeFree : String
 includeFree = "include_played_free_games=1"
