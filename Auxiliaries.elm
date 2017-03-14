@@ -18,14 +18,6 @@ truncateAt pos x =
   else let power = 10 ^ toFloat pos
        in toFloat (round (power * x)) / power
 
-{- Unzip a list of 5-tuples into five lists containing the individual components of the
-   tuples respectively. -}
-unzip5 : List (a, b, c, d, e) -> (List a, List b, List c, List d, List e)
-unzip5 list = case list of
-  []                          ->  ([], [], [], [], [])
-  ((a, b, c, d, e) :: abcdes) -> let (aas, bs, cs, ds, es) = unzip5 abcdes 
-                                 in (a :: aas, b :: bs, c :: cs, d :: ds, e :: es)
-
 {- A precise division of integers. -}
 (///) : Int -> Int -> Float
 (///) a b = Basics.toFloat a / Basics.toFloat b

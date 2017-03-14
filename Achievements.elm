@@ -9,7 +9,7 @@ import List exposing             ( length, foldr )
 import String exposing           ( join )
 import Task exposing             ( perform, sequence, Task )
 
-import Auxiliaries exposing      ( catMaybes, truncateAt, unzip5, (///) ) 
+import Auxiliaries exposing      ( catMaybes, truncateAt, (///) ) 
 
 main =
   Html.program
@@ -48,7 +48,9 @@ toDuration : Int -> Duration
 toDuration n = Duration (n // 60) (n % 60)
 
 showDuration : Duration -> String
-showDuration d = join " " ([toString d.hours, "hours"] ++ (if d.minutes == 0 then [] else toString d.minutes :: []))
+showDuration d = 
+  join " " 
+       ([toString d.hours, "hours"] ++ (if d.minutes == 0 then [] else toString d.minutes :: []))
 
 type alias Stats = 
   {
@@ -164,46 +166,45 @@ processGames key user n gs =
 
 createStats : List Game -> (List Stats, Duration, Float, Float)
 createStats gs =
-  let {- Collect and compute the information that is available per game already.
-         The result is basically a GameStats, but the improvement value in case
-         you make a single achievement more is missing.
-        -}
-      createPreStats : List Game -> List (String, Int, Int, Float, Int, Int)
-      createPreStats = 
-        let f game = 
-          let exactQuota = game.obtained /// game.obtainable
-          in (game.name, 
-              game.obtained,
-              game.obtainable, 
-              exactQuota,
-              Basics.round exactQuota,
-              game.timePlayed)
-        in List.map f
+  let startedGames = List.length (List.filter (\g -> g.obtained > 0) gs)
 
-
+      {- Compute by how much the overall completion percentage would be changed
+         if an additional achievement was achieved. Note that the resulting number
+         can be zero (got all achievements already) or even negative (no achievements yet). -}
       improve : Int -> Int -> Float
       improve have want = 
         if (have >= want) then 0
         else let gameNumber = if (have > 0) then startedGames else (1 + startedGames)
              in 1 / (toFloat want * toFloat gameNumber)
 
-      preStats = createPreStats gs
-      (obs, obtbls, exs, rds, ts) = 
-        Auxiliaries.unzip5 (List.map (\(_, obt, obtbl, ex, rd, t) -> (obt, obtbl, ex, rd, t)) 
-                                     preStats)
-      allAchievements = List.sum obtbls
-      gotAchievements  = List.sum obs
-      exactProgresses = List.sum exs
-      minutes = List.sum ts
+      {- Collect and compute the information that is available per game already.
+         The result is basically a GameStats, but the improvement value in case
+         you make a single achievement more is missing.
+        -}
+      createStats : List Game -> List Stats
+      createStats = 
+        let f game = 
+          let exactQuota = game.obtained /// game.obtainable
+          in Stats game.name 
+                   game.obtained
+                   game.obtainable 
+                   exactQuota
+                   (Basics.round exactQuota)
+                   (improve game.obtained game.obtainable)
+                   game.timePlayed
+        in List.map f
+  
+      stats = createStats gs
+    
+      allAchievements = List.sum (List.map (\s -> s.obtainable) stats)
+      gotAchievements  = List.sum (List.map (\s -> s.obtained) stats)
+      exactProgresses = List.sum (List.map (\s -> s.preciseQuota) stats)
+      minutes = List.sum (List.map (\s -> s.timePlayed) stats)
 
-      startedGames = List.length (List.filter (\g -> g.obtained > 0) gs)
-
-      
-
-      gameStats = 
-        List.map (\(name, got, get, exQ, rdQ, time) -> Stats name got get exQ rdQ (improve got get) time)
-                 preStats
-  in (gameStats, toDuration minutes, exactProgresses / Basics.toFloat startedGames,  gotAchievements /// allAchievements)
+  in (stats, 
+      toDuration minutes, 
+      exactProgresses / Basics.toFloat startedGames,
+      gotAchievements /// allAchievements)
 
 -- The precision with which the achievement quotas are computed.
 precision : Int
