@@ -6,9 +6,10 @@ import Html.Events exposing      ( onInput, onClick )
 import Http exposing             ( Error, send, get, Request, emptyBody )
 import Json.Decode exposing      ( at, int, field, string, list, map, map2 )
 import List exposing             ( length, foldr )
+import String exposing           ( join )
 import Task exposing             ( perform, sequence, Task )
 
-import Auxiliaries exposing      ( catMaybes ) 
+import Auxiliaries exposing      ( catMaybes, truncateAt, unzip5, (///) ) 
 
 main =
   Html.program
@@ -37,17 +38,28 @@ type alias Game =
     {
         name : String,
         timePlayed : Int,
-        achievementsObtained : Int,
-        achievementsObtainable : Int
+        obtained : Int,
+        obtainable : Int
     }
+
+type alias Duration = { hours : Int, minutes : Int }
+
+toDuration : Int -> Duration
+toDuration n = Duration (n // 60) (n % 60)
+
+showDuration : Duration -> String
+showDuration d = join " " ([toString d.hours, "hours"] ++ (if d.minutes == 0 then [] else toString d.minutes :: []))
 
 type alias Stats = 
   {
-    name : String,
-    gettable : Int,
-    gotten : Int,
-    preciseQuota : Float,
-    discreteQuota : Int
+    name : String,         -- name of the game
+    obtained : Int,        -- number of obtained achievements
+    obtainable : Int,      -- number of obtainable achievements
+    preciseQuota : Float,  -- the exact percentage of the gettable achievements
+    discreteQuota : Int,   -- the rounded percentage of the gettable achievements
+    improvement : Float,   {- how much one more achievement in this game would additively change 
+                              the overall completion rate -}
+    timePlayed : Int       -- the amount of time spent on this game (so far)
   }
 
 type Achievement = Achievement { label : String, unlocked : Bool }
@@ -141,7 +153,7 @@ processGames key user n gs =
   let f : Id -> Minutes -> Task Never (Maybe Game)
       f gameId time =
         let (gameName, gameAchieved) = fetchAchievementsPerGame key user gameId 
-            cmdGame =  
+            cmdGame = 
               Http.toTask (fetchAchievementNumber key gameId)
                 |> Task.andThen (\an -> Http.toTask gameName 
                   |> Task.andThen (\name -> Task.onError (always (Task.succeed 0)) 
@@ -150,7 +162,54 @@ processGames key user n gs =
         in Task.onError (always (Task.succeed Nothing)) cmdGame  
   in Task.perform catMaybes (Task.sequence (List.map (uncurry f) gs))
 
---createStats : List Game -> List ()
+createStats : List Game -> (List Stats, Duration, Float, Float)
+createStats gs =
+  let {- Collect and compute the information that is available per game already.
+         The result is basically a GameStats, but the improvement value in case
+         you make a single achievement more is missing.
+        -}
+      createPreStats : List Game -> List (String, Int, Int, Float, Int, Int)
+      createPreStats = 
+        let f game = 
+          let exactQuota = game.obtained /// game.obtainable
+          in (game.name, 
+              game.obtained,
+              game.obtainable, 
+              exactQuota,
+              Basics.round exactQuota,
+              game.timePlayed)
+        in List.map f
+
+
+      improve : Int -> Int -> Float
+      improve have want = 
+        if (have >= want) then 0
+        else let gameNumber = if (have > 0) then startedGames else (1 + startedGames)
+             in 1 / (toFloat want * toFloat gameNumber)
+
+      preStats = createPreStats gs
+      (obs, obtbls, exs, rds, ts) = 
+        Auxiliaries.unzip5 (List.map (\(_, obt, obtbl, ex, rd, t) -> (obt, obtbl, ex, rd, t)) 
+                                     preStats)
+      allAchievements = List.sum obtbls
+      gotAchievements  = List.sum obs
+      exactProgresses = List.sum exs
+      minutes = List.sum ts
+
+      startedGames = List.length (List.filter (\g -> g.obtained > 0) gs)
+
+      
+
+      gameStats = 
+        List.map (\(name, got, get, exQ, rdQ, time) -> Stats name got get exQ rdQ (improve got get) time)
+                 preStats
+  in (gameStats, toDuration minutes, exactProgresses / Basics.toFloat startedGames,  gotAchievements /// allAchievements)
+
+-- The precision with which the achievement quotas are computed.
+precision : Int
+precision = 3
+
+
 
 {- Fetch the number of achievements a game has. If the game has achievements, the number of
    achievements is returned as a Just, otherwise Nothing is returned. -}
@@ -165,12 +224,10 @@ fetchAchievementsPerGame : Key -> User -> Id -> (Http.Request String, Http.Reque
 fetchAchievementsPerGame key user gameId =
   let query = get (mkUserStatsQuery key user gameId)
 
-      --decodeNameLength = field "playerstats" parts
       lengthDecoder = Json.Decode.map length (field "achievements" (list (field "achieved" int)))
-      --parts = map2 (,) (field "gameName" string) 
-      --                 (Json.Decode.map length (field "achievements" (list (field "achieved" int))))
   in (query (at [ "playerstats", "gameName" ] string), 
       query (field "playerstats" lengthDecoder ))
+
 {- The server to query for the Steam API. -}
 server : String
 server = "http://localhost:80/steam/"
