@@ -10,7 +10,7 @@ import Task exposing             ( perform, sequence, Task )
 import Table exposing            ( State )
 
 import Auxiliaries exposing      ( catMaybes, truncateAt, (///), sumMap )
-import Duration exposing         ( Duration, toDuration )
+import Duration exposing         ( Duration, toDuration, zero )
 
 main =
   Html.program
@@ -35,13 +35,6 @@ type alias Model =
         key : Key,
         user : User,
         statistics : Statistics,
-        gameStats : List Stats,
-        timePlayed : Duration,
-        gotten : Int,
-        gettable : Int,
-        preciseQuota : Float,
-        roundedQuota : Float,
-        average : Float,
         displayState : DisplayState,
         tableState : Table.State,
         nameQuery : String,
@@ -58,27 +51,53 @@ type alias Game =
 
 type alias Stats = 
   {
-    name : String,         -- name of the game
-    obtained : Int,        -- number of obtained achievements
-    obtainable : Int,      -- number of obtainable achievements
-    preciseQuota : Float,  -- the exact percentage of the gettable achievements
-    discreteQuota : Int,   -- the rounded percentage of the gettable achievements
-    improvement : Float,   {- how much one more achievement in this game would additively change 
-                              the overall completion rate -}
-    timePlayed : Int       -- the amount of time spent on this game (so far)
+    -- Name of the game.
+    name : String,   
+    -- Number of obtained achievements.
+    obtained : Int,
+    -- Number of obtainable achievements.             
+    obtainable : Int,
+    -- The exact percentage of the gettable achievements.
+    preciseQuota : Float,
+    -- The rounded percentage of the gettable achievements.
+    discreteQuota : Int,
+     {- How much one more achievement in this game would affect
+        the average of the precise completion rates (including only the started games). -}
+    changeInStartedCompletionRatesPrecise : Float, 
+    {- How much one more achievement in this game would affect
+        the average of the rounded completion rates (including only the started games). -}
+    changeInStartedCompletionRatesRounded : Float,
+    {- How much one more achievement in this game would affect 
+       the average of the precise completion rates in total (including unplayed games). -}
+    changeInOverallCompletionRatesPrecise : Float,
+    {- How much one more achievement in this game would affect 
+       the average of the rounded completion rates in total (including unplayed games). -}
+    changeInOverallCompletionRatesRounded : Float,
+    {- How much one more achievement would affect the quotient of the obtained achievements
+       and the overall achievements in started games. -}
+    changeInStartedTotalQuota : Float,
+    {- How much one more achievement would affect the quotient of the obtained achievements
+       and the overall achievement, i.e. all possible achievements taken over all games. -}
+    changeInTotalQuota : Float,
+    -- The amount of time spent on this game (so far).
+    timePlayed : Int                 
   }
 
 type alias Statistics = {
   listOfStats : List Stats,
-  timeWithAchievements: Duration,
-  timeOverall : Duration,
-  obtained : Int,
-  obtainableInStartedGames : Int,
-  obtainableOverall : Int,
-  averageOfPreciseQuotas : Float,
-  averageOfRoundedQuotas : Float,
-  averageOverallInStarted : Float,
-  averageOverall : Float
+  numberOfGamesTotal : Int,
+  --numberOfGamesWithAchievements : Int,
+  --numberOfStartedGamesWithAchievements : Int,
+  timeOverall : Duration--,
+  --timeWithAchievements: Duration,
+  --timeWithStartedAchievements : Duration,
+  --obtained : Int,
+  --obtainableInStartedGames : Int,
+  --obtainableOverall : Int,
+  --averageOfPreciseQuotas : Float,
+  --averageOfRoundedQuotas : Float,
+  --averageOverallInStarted : Float,
+  --averageOverall : Float
 }
 
 type Achievement = Achievement { label : String, unlocked : Bool }
@@ -95,13 +114,22 @@ initialModel : (Model, Cmd Msg)
 initialModel = ({
     key = "",
     user = "",
-    gameStats = [],
-    timePlayed = Duration.toDuration 0,
-    gotten = 0,
-    gettable = 0,
-    preciseQuota = 0.0,
-    roundedQuota = 0.0,
-    average = 0.0,
+    statistics = {
+      listOfStats = [],
+      numberOfGamesTotal = 0--,
+      --numberOfGamesWithAchievements = 0,
+      --numberOfStartedGamesWithAchievements = 0,
+      timeOverall = zero,
+      --timeWithAchievements = zero,
+      --timeWithStartedAchievements = zero,
+      --obtained = 0,
+      --obtainableInStartedGames = 0,
+      --obtainableOverall = 0,
+      --averageOfPreciseQuotas = 0.0,
+      --averageOfRoundedQuotas = 0.0,
+      --averageOverallInStarted = 0.0,
+      --averageOverall = 0.0
+    },
     displayState = Initial,
     tableState = Table.initialSort "Name",
     nameQuery = "",
@@ -141,23 +169,32 @@ view model =
       tableView : Model -> Html Msg
       tableView model =
         let lowerQuery = String.toLower model.nameQuery
-            filteredGames = List.filter (String.contains lowerQuery << String.toLower << .name) model.gameStats
+            filteredGames = List.filter (String.contains lowerQuery << String.toLower << .name) model.statistics.listOfStats
             
             toCell : String -> Html Msg
             toCell str = td [] [ text str ]
 
             toTable : List (List String) -> Html Msg
             toTable = table [] << List.map (tr [] << List.map toCell)
+
+            stats = model.statistics
         in
           div []
             [ h1 [] [ text "Achievement statistics for all games" ]
             , toTable [
-              ["Overall play time:",                       Duration.toString model.timePlayed],
-              ["Achievements obtained:",                   toString model.gotten],
-              ["Achievements obtainable:",                 toString model.gettable],
-              ["Overall quota:",                           toString (truncate model.average)],
-              ["Average of the exact completion rates:",   toString (truncate model.preciseQuota)],
-              ["Average of the rounded completion rates:", toString (truncate model.roundedQuota)]
+              ["Total number of games:",                    toString stats.numberOfGamesTotal],
+              ["Number of games with achievements:",        toString stats.numberOfGamesWithAchievements],
+              ["Number of games with at least one obtained achievement:",
+                                                            toString stats.numberOfStartedGamesWithAchievements],
+              ["Overall play time:",                        Duration.toString stats.timeOverall],
+              ["Play time in games with achievements:",     Duration.toString stats.timeWithAchievements],
+              ["Achievements obtained:",                    toString stats.obtained],
+              ["Achievements obtainable in started games:", toString stats.obtainableInStartedGames],
+              ["Achievements obtainable overall",           toString stats.obtainableOverall],
+              ["Average of the exact completion rates:",    toString (truncate stats.averageOfPreciseQuotas)],
+              ["Average of the rounded completion rates:",  toString (truncate stats.averageOfRoundedQuotas)],
+              ["Overall average in started games:",         toString (truncate stats.averageOverallInStarted)],
+              ["Overall average:",                          toString (truncate stats.averageOverall)]
             ]
             , input [ placeholder "Search by game title", onInput SetQuery ] []
             , Table.view config model.tableState filteredGames
@@ -194,19 +231,10 @@ update msg model = case msg of
   Key key                      -> ({ model | key = key }, Cmd.none)
   Fetch                        -> ({ model | displayState = Loading }, fetchGames model.key model.user)
   FetchCollection (Err err)    -> ({ model | errorMsg = toString err }, Cmd.none)
-  FetchCollection (Ok (n, gs)) -> (model, processGames model.key model.user (List.take 25 gs))
-  Finished statistics          -> ({ model | 
-                                      gameStats = statistics.listOfStats,
-                                      timePlayed = stati,
-                                      gotten = have,
-                                      gettable = want,
-                                      preciseQuota = ex,
-                                      roundedQuota = rd,
-                                      average = av,
-                                      displayState = Table }, 
-                                   Cmd.none)
+  FetchCollection (Ok (n, gs)) -> (model, processGames model.key model.user n (List.take n gs))
+  Finished statistics          -> ({ model | statistics = statistics, displayState = Table }, Cmd.none)
   SetQuery q                   -> ({ model | nameQuery = q }, Cmd.none)
-  SetTableState s              -> (model, Cmd.none)
+  SetTableState s              -> ({ model | tableState = s }, Cmd.none)
 
 {- Fetch the games associated with the given user (using the supplied key).
    The resulting request is then passed on for further processing to fetch the individual game statistics. -}
@@ -248,11 +276,10 @@ preprocessGames key user gs =
         in Task.onError (always (Task.succeed Nothing)) cmdGame  
   in Task.map catMaybes (Task.sequence (List.map (uncurry f) gs))
 
-processGames : Key -> User -> List (Id, Minutes) -> Cmd Msg
-processGames key user gs =
-  let d2 = sumMap Tuple.first gs
-      f (gs, d1, h, w, f1, f2, av) = Finished gs d1 d2 h w f1 f2 av
-  in Task.perform (f << createStats) (preprocessGames key user gs)
+processGames : Key -> User -> Int -> List (Id, Minutes) -> Cmd Msg
+processGames key user n gs =
+  let overallDuration = Duration.toDuration (sumMap Tuple.second gs)
+  in Task.perform (Finished << createStats n overallDuration) (preprocessGames key user gs)
 
 {- Given a list of games, this function computes the metadata of interest.
    The result is constructed as
@@ -271,8 +298,8 @@ processGames key user gs =
                 obtainable achievements in those games where at least one achievement has
                 been unlocked.
    -}
-createStats : List Game -> (List Stats, Duration, Int, Int, Float, Float, Float)
-createStats gs =
+createStats : Int -> Duration -> List Game -> Statistics
+createStats n overallDuration gs =
   let startedGames       = List.filter (((<) 0) << .obtained) gs
       startedGamesLength = List.length startedGames
 
@@ -307,19 +334,29 @@ createStats gs =
   
       stats = mkStats startedGames
     
-      allAchievements   = sumMap .obtainable stats
-      gotAchievements   = sumMap .obtained stats
-      exactProgresses   = sumMap .preciseQuota stats
-      roundedProgresses = sumMap .discreteQuota stats
-      minutes           = sumMap .timePlayed gs
+      allAchievements     = sumMap .obtainable gs
+      startedAchievements = sumMap .obtainable stats
+      gotAchievements     = sumMap .obtained stats
+      exactProgresses     = sumMap .preciseQuota stats
+      roundedProgresses   = sumMap .discreteQuota stats
+      minutes             = sumMap .timePlayed gs
 
-  in (stats, 
-      toDuration minutes,
-      gotAchievements,
-      allAchievements,
-      exactProgresses / Basics.toFloat startedGamesLength,
-      roundedProgresses /// startedGamesLength,
-      percentage gotAchievements allAchievements)
+  in  { 
+      listOfStats = stats,
+      numberOfGamesTotal = n,
+      numberOfGamesWithAchievements = List.length stats,
+      numberOfStartedGamesWithAchievements = startedGamesLength,
+      timeOverall = overallDuration,
+      timeWithAchievements = Duration.toDuration (sumMap .timePlayed gs),
+      timeWithStartedAchievements = Duration.toDuration (sumMap .timePlayed stats),
+      obtained = gotAchievements,
+      obtainableInStartedGames = startedAchievements,
+      obtainableOverall = sumMap .obtainable gs,
+      averageOfPreciseQuotas = exactProgresses / Basics.toFloat startedGamesLength,
+      averageOfRoundedQuotas = roundedProgresses /// startedGamesLength,
+      averageOverallInStarted = percentage gotAchievements startedAchievements,
+      averageOverall = percentage gotAchievements allAchievements
+      }
 
 -- The precision with which the achievement quotas are computed.
 precision : Int
