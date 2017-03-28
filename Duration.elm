@@ -16,6 +16,11 @@ toString d =
        ([Basics.toString d.hours, "hours"] 
         ++ (if d.minutes == 0 then [] else [Basics.toString d.minutes, "minutes"]))
 
+{- Pretty-print a duration as a combination of weeks, days, hours, and minutes.
+   The reason we stop at "weeks" is that both months and years are no longer uniform
+   measures of time, which makes them more difficult to interpret.
+   For instance, how many hours is a month? While you could say 730, as in (365 * 24) / 12,
+   this is an odd length and as such quite intransparent. -}
 toFullString : Duration -> String
 toFullString d =
   let (days, remHours) = (d.hours // 24, d.hours % 24)
