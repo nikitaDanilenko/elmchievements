@@ -1,6 +1,6 @@
 module Duration exposing ( .. )
 
-import Auxiliaries exposing ( zip )
+import Auxiliaries exposing ( zip, unwords )
 
 {- A representation of time in terms of hours and minutes. -}
 type alias Duration = { hours : Int, minutes : Int }
@@ -25,9 +25,9 @@ toFullString : Duration -> String
 toFullString d =
   let (days, remHours) = (d.hours // 24, d.hours % 24)
       (weeks, remDays) = (days // 7, days % 7)
-      times = zip [weeks, remDays, remHours, d.minutes] [" weeks", " days", " hours", " minutes"]
+      times = zip [weeks, remDays, remHours, d.minutes] ["weeks", "days", "hours", "minutes"]
       filtered = List.filter (\(t, _) -> t > 0) times
-  in String.concat (List.map (\(t, n) -> String.concat [Basics.toString t, n]) filtered)
+  in unwords (List.map (\(t, n) -> unwords [Basics.toString t, n]) filtered)
 
 {- Convert a duration into a number of minutes. -}
 toInt : Duration -> Int
