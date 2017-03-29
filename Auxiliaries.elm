@@ -38,3 +38,8 @@ zipWith f = let go l m = case (l, m) of
    The length of the result is the length of the shorter list. -}
 zip : List a -> List b -> List (a, b)
 zip = zipWith (,)
+
+{- Flatten a list of words to a sentence by interspersing an empty space in between words and
+   concatenating the result. -}
+unwords : List String -> String
+unwords = String.concat << List.intersperse " "
