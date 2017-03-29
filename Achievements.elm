@@ -9,7 +9,7 @@ import List exposing             ( length, foldr )
 import Task exposing             ( perform, sequence, Task )
 import Table exposing            ( State )
 
-import Auxiliaries exposing      ( catMaybes, truncateAt, (///), sumMap )
+import Auxiliaries exposing      ( catMaybes, truncateAt, (///), sumMap, unwords )
 import Duration exposing         ( Duration, toDuration, zero )
 
 main =
@@ -37,6 +37,7 @@ type alias Model =
         statistics : Statistics,
         displayState : DisplayState,
         tableState : Table.State,
+        noAchievmentState : Table.State,
         nameQuery : String,
         errorMsg : String
     }
@@ -92,6 +93,8 @@ type alias Stats =
 type alias Statistics = {
   -- The list of individual game statistics.
   listOfStats : List Stats,
+  -- The list of all those games that do not have any achievements.
+  listOfGamesWithoutAchievements : List Game,
   -- The number of all games owned by the user.
   numberOfGamesTotal : Int,
     -- The number of all those games that have been played for at least one minute.
@@ -127,6 +130,7 @@ type alias Statistics = {
 emptyStatistics : Statistics
 emptyStatistics = {
     listOfStats = [],
+    listOfGamesWithoutAchievements = [],
     numberOfGamesTotal = 0,
     numberOfPlayedGames = 0,
     numberOfGamesWithAchievements = 0,
@@ -153,6 +157,7 @@ type Msg = User User         -- the user whose achievement stats are desired
          | Finished Statistics
          | SetQuery String
          | SetTableState Table.State
+         | SetNoAchievementState Table.State
 
 initialModel : (Model, Cmd Msg)
 initialModel = ({
@@ -161,6 +166,7 @@ initialModel = ({
     statistics = emptyStatistics,
     displayState = Initial,
     tableState = Table.initialSort "Name",
+    noAchievmentState = Table.initialSort "Name",
     nameQuery = "",
     errorMsg =  ""
   }
@@ -217,11 +223,11 @@ view model =
               ["Number of games with at least one obtained achievement:",
                                                             toString stats.numberOfStartedGamesWithAchievements],
               ["Number of perfect games:",                  toString stats.numberOfPerfectGames],
-              ["Overall play time:",                        String.concat [
+              ["Overall play time:",                        unwords [
                                                                 Duration.toString stats.timeOverall,
                                                                 String.concat ["(", Duration.toFullString stats.timeOverall, ")"]
                                                             ]],
-              ["Play time in games with achievements:",     String.concat [
+              ["Play time in games with achievements:",     unwords [
                                                                 Duration.toString stats.timeWithAchievements,
                                                                 String.concat ["(", Duration.toFullString stats.timeWithAchievements, ")"]
                                                             ]],
@@ -235,6 +241,7 @@ view model =
             ]
             , input [ placeholder "Search by game title", onInput SetQuery ] []
             , Table.view config model.tableState filteredGames
+            , Table.view configNoAchievements model.noAchievmentState stats.listOfGamesWithoutAchievements
             ]
 
       currentView = case model.displayState of 
@@ -249,23 +256,33 @@ truncate = truncateAt precision
 
 config : Table.Config Stats Msg
 config = Table.config
-      { toId = .name
+      { toId = String.toLower << .name
       , toMsg = SetTableState
       , columns =
-          [ Table.stringColumn "Name"          .name
-          , Table.intColumn    "Obtained"      .obtained
-          , Table.intColumn    "Obtainable"    .obtainable
-          , Table.floatColumn  "Exact quota"   (truncate << .preciseQuota) 
-          , Table.intColumn    "Rounded quota" .discreteQuota
+          [ Table.stringColumn "Name"                       .name
+          , Table.intColumn    "Obtained"                   .obtained
+          , Table.intColumn    "Obtainable"                 .obtainable
+          , Table.floatColumn  "Exact quota"                (truncate << .preciseQuota) 
+          , Table.intColumn    "Rounded quota"              .discreteQuota
           , Table.floatColumn  "\x0394 CR precise, started" (truncate << .changeInStartedCompletionRatesPrecise)
           , Table.floatColumn  "\x0394 CR rounded, started" (truncate << .changeInStartedCompletionRatesRounded)
           , Table.floatColumn  "\x0394 CR precise, all"     (truncate << .changeInOverallCompletionRatesPrecise)
           , Table.floatColumn  "\x0394 CR rounded, all"     (truncate << .changeInOverallCompletionRatesRounded)
           , Table.floatColumn  "\x0394 Q started"           (truncateAt 5 << .changeInStartedTotalQuota)
           , Table.floatColumn  "\x0394 Q all"               (truncateAt 5 << .changeInTotalQuota)
-          , Table.stringColumn "Play time"     (Duration.toString << Duration.toDuration << .timePlayed)
+          , Table.stringColumn "Play time"                  (Duration.toString << Duration.toDuration << .timePlayed)
           ]
       }
+
+configNoAchievements : Table.Config Game Msg
+configNoAchievements = Table.config {
+    toId = String.toLower << .name,
+    toMsg = SetNoAchievementState,
+    columns = [
+      Table.stringColumn "Name" .name,
+      Table.stringColumn "Play time" (Duration.toString << Duration.toDuration << .timePlayed)
+    ]
+  }
 
 update : Msg -> Model -> (Model, Cmd Msg)
 update msg model = case msg of 
@@ -277,6 +294,7 @@ update msg model = case msg of
   Finished statistics          -> ({ model | statistics = statistics, displayState = Table }, Cmd.none)
   SetQuery q                   -> ({ model | nameQuery = q }, Cmd.none)
   SetTableState s              -> ({ model | tableState = s }, Cmd.none)
+  SetNoAchievementState s      -> ({ model | noAchievmentState = s}, Cmd.none)
 
 {- Fetch the games associated with the given user (using the supplied key).
    The resulting request is then passed on for further processing to fetch the individual game statistics. -}
@@ -304,29 +322,31 @@ fetchGames key user =
 
    The resulting list contains only those games, where the achievement query was successful, i.e.
    only games that do have achievements. -}
-preprocessGames : Key -> User -> List (Id, Minutes) -> Task Never (List Game)
+preprocessGames : Key -> User -> List (Id, Minutes) -> Task Never (List Game, List Game)
 preprocessGames key user gs = 
   let f : Id -> Minutes -> Task Never (Maybe Game)
       f gameId time =
         let (gameName, gameAchieved) = fetchAchievementsPerGame key user gameId 
-            cmdGame = 
-              Http.toTask (fetchAchievementNumber key gameId)
-                |> Task.andThen (\an -> Http.toTask gameName 
-                  |> Task.andThen (\name -> Task.onError (always (Task.succeed 0)) 
-                                                         (Http.toTask gameAchieved)
-                    |> Task.andThen (\got -> Task.succeed (Just (Game name time got an)))))
-        in Task.onError (always (Task.succeed Nothing)) cmdGame  
-  in Task.map catMaybes (Task.sequence (List.map (uncurry f) gs))
+            cmdGame =
+              Http.toTask gameName
+                |> Task.andThen (\name -> Task.onError (always (Task.succeed 0)) (Http.toTask (fetchAchievementNumber key gameId))
+                  |> Task.andThen (\achNumber -> Task.onError (always (Task.succeed 0)) (Http.toTask gameAchieved)
+                    |> Task.andThen (\achieved -> Task.succeed (Just (Game name time achieved achNumber))
+                      )
+                    ) 
+                  )
+        in Task.onError (always (Task.succeed Nothing)) cmdGame
+  in Task.map (List.partition (\g -> g.obtainable > 0) << catMaybes) (Task.sequence (List.map (uncurry f) gs))
 
 processGames : Key -> User -> Int -> List (Id, Minutes) -> Cmd Msg
 processGames key user n gs =
   let overallDuration = Duration.toDuration (sumMap Tuple.second gs)
       playedGames     = List.length (List.filter (\(_, m) -> m > 0) gs)
-  in Task.perform (Finished << createStats n playedGames overallDuration) (preprocessGames key user gs)
+  in Task.perform (Finished << uncurry (createStats n playedGames overallDuration)) (preprocessGames key user gs)
 
 {- Given a list of games, this function computes the metadata of interest. -}
-createStats : Int -> Int -> Duration -> List Game -> Statistics
-createStats allGames playedGames overallDuration gs =
+createStats : Int -> Int -> Duration -> List Game -> List Game -> Statistics
+createStats allGames playedGames overallDuration gs gamesWithoutAchievements =
   let startedGames       = List.filter (((<) 0) << .obtained) gs
       startedGamesLength = List.length startedGames
 
@@ -349,9 +369,6 @@ createStats allGames playedGames overallDuration gs =
       {- Compute by how much the overall completion percentage would be changed
          if an additional achievement was achieved. Note that the resulting number
          can be zero (got all achievements already) or even negative (no achievements yet). -}
-
-         --(n * qs + n/w - n' * qs) / (n * n')
-
       change : (Int -> Int -> Int) -> Int -> Int -> Float -> Float
       change mkNewNumber have want sumOfPreviousQuotas = 
         if (have >= want) then 0
@@ -362,7 +379,6 @@ createStats allGames playedGames overallDuration gs =
                       - gameNumber * sumOfPreviousQuotas) 
                   / (gameNumber * sgl)
 
-    -- Das stimmt noch nicht, weil für die absoluten Rechnungen die "wants" nicht mehr verändert werden müssen!
       changeTotalQuota : Bool -> Int -> Int -> Int -> Int -> Float
       changeTotalQuota overall have want allHave allWant = 
         let currentQuota = allHave /// allWant
@@ -415,6 +431,7 @@ createStats allGames playedGames overallDuration gs =
 
   in  { 
       listOfStats = allStats,
+      listOfGamesWithoutAchievements = gamesWithoutAchievements,
       numberOfGamesTotal = allGames,
       numberOfPlayedGames = playedGames,
       numberOfGamesWithAchievements = List.length allStats,
