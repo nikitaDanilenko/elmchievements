@@ -1,7 +1,8 @@
 module Achievements exposing ( .. )
 
-import Html exposing             ( Html, div, input, text, button, h1, table, tr, td, progress )
-import Html.Attributes exposing  ( placeholder, autocomplete )
+import Html exposing             ( Html, div, input, text, button, h1, table, tr, td, progress, 
+                                   header, node )
+import Html.Attributes exposing  ( placeholder, autocomplete, rel, type_, href, id, class )
 import Html.Events exposing      ( onInput, onClick )
 import Http exposing             ( Error, send, get, Request, emptyBody )
 import Json.Decode exposing      ( at, int, field, string, list, map, map2 )
@@ -118,8 +119,12 @@ type alias Statistics = {
   -- The number of achievements in all games.
   obtainableOverall : Int,
   -- The average of all precise quotas taken over all games where at least one achievement has been obtained.
-  averageOfPreciseQuotas : Float,
+  averageOfPreciseQuotasStarted : Float,
   -- The average of all rounded quotas taken over all games where at least one achievement has been obtained.
+  averageOfRoundedQuotasStarted : Float,
+  -- The average of all precise quotas taken over all games.
+  averageOfPreciseQuotas : Float,
+  -- The average of all rounded quotas taken over all games.
   averageOfRoundedQuotas : Float,
   -- The quotient of all obtained achievements and all achievements obtainable in started games.
   averageOverallInStarted : Float,
@@ -142,6 +147,8 @@ emptyStatistics = {
     obtained = 0,
     obtainableInStartedGames = 0,
     obtainableOverall = 0,
+    averageOfPreciseQuotasStarted = 0.0,
+    averageOfRoundedQuotasStarted = 0.0,
     averageOfPreciseQuotas = 0.0,
     averageOfRoundedQuotas = 0.0,
     averageOverallInStarted = 0.0,
@@ -176,28 +183,28 @@ view : Model -> Html Msg
 view model = 
   let initialView : Model -> Html Msg
       initialView model = 
-        div [] 
+        div [ id "initialMain" ] 
             [
-          div [] 
+          div [ id "keyField" ] 
               [
                 input [ autocomplete True, onInput Key ] []
               ],
-          div []
+          div [ id "userField" ]
               [
                 input [ autocomplete True, onInput User ] []
               ],
-          div []
+          div [ id "fetchButton" ]
               [
-                button [ onClick Fetch ] [ text "Fetch data" ]
+                button [ class "button", onClick Fetch ] [ text "Fetch data" ]
               ],
-          div [] [ text model.errorMsg ]
+          div [ id "errorLabel" ] [ text model.errorMsg ]
             ]
 
       loadingView : Model -> Html Msg
       loadingView _ = 
-        div [] [
-          div [] [ text "Fetching game information" ],
-          div [] [ progress [] [] ]
+        div [ id "loadingMain" ] [
+          div [ id "loadingInfoText" ] [ text "Fetching game information" ],
+          div [ id "loadingBar"] [ progress [ id "fetchingProgressBar" ] [] ]
         ]
 
 
@@ -214,7 +221,7 @@ view model =
 
             stats = model.statistics
         in
-          div []
+          div [ id "statisticsMain" ]
             [ h1 [] [ text "Achievement statistics for all games" ]
             , toTable [
               ["Total number of games:",                    toString stats.numberOfGamesTotal],
@@ -231,17 +238,29 @@ view model =
                                                                 Duration.toString stats.timeWithAchievements,
                                                                 String.concat ["(", Duration.toFullString stats.timeWithAchievements, ")"]
                                                             ]],
+              ["Play time in games started achievements:",  unwords [
+                                                                Duration.toString stats.timeWithStartedAchievements,
+                                                                String.concat ["(", Duration.toFullString stats.timeWithStartedAchievements, ")"]
+                                                            ]],
               ["Achievements obtained:",                    toString stats.obtained],
               ["Achievements obtainable in started games:", toString stats.obtainableInStartedGames],
               ["Achievements obtainable overall",           toString stats.obtainableOverall],
-              ["Average of the exact completion rates:",    toString (truncate stats.averageOfPreciseQuotas)],
-              ["Average of the rounded completion rates:",  toString (truncate stats.averageOfRoundedQuotas)],
+              ["Average of the exact completion rates in started games (CRPS):",
+                                                            toString (truncate stats.averageOfPreciseQuotas)],
+              ["Average of the rounded completion rates in started games (CRRS):",  
+                                                            toString (truncate stats.averageOfRoundedQuotas)],
+              ["Average of the exact completion rates overall (CRPT):",
+                                                            toString (truncate stats.averageOfPreciseQuotas)],
+              ["Average of the rounded completion rates overall (CRRT):",  
+                                                            toString (truncate stats.averageOfRoundedQuotas)],
               ["Overall average in started games:",         toString (truncate stats.averageOverallInStarted)],
               ["Overall average:",                          toString (truncate stats.averageOverall)]
             ]
             , input [ placeholder "Search by game title", onInput SetQuery ] []
-            , Table.view config model.tableState filteredGames
-            , Table.view configNoAchievements model.noAchievmentState stats.listOfGamesWithoutAchievements
+            , div [ class "achievementTable" ] [ Table.view config model.tableState filteredGames ]
+            {- Currently, most games without achievements do not provide stats at all (not even their name!),
+               which is why we omit this table for now. -}
+            --, Table.view configNoAchievements model.noAchievmentState stats.listOfGamesWithoutAchievements
             ]
 
       currentView = case model.displayState of 
@@ -249,7 +268,11 @@ view model =
         Loading -> loadingView
         Table   -> tableView
 
-    in currentView model
+    in div [ id "mainPage"]
+           [
+             node "link" [ rel "stylesheet", type_ "text/css", href "style.css" ] [],
+             currentView model 
+           ]
 
 truncate : Float -> Float
 truncate = truncateAt precision
@@ -443,8 +466,10 @@ createStats allGames playedGames overallDuration gs gamesWithoutAchievements =
       obtained = gotAchievements,
       obtainableInStartedGames = startedAchievements,
       obtainableOverall = sumMap .obtainable gs,
-      averageOfPreciseQuotas = exactProgresses / Basics.toFloat startedGamesLength,
-      averageOfRoundedQuotas = roundedProgresses /// startedGamesLength,
+      averageOfPreciseQuotasStarted = exactProgresses / Basics.toFloat startedGamesLength,
+      averageOfRoundedQuotasStarted = roundedProgresses /// startedGamesLength,
+      averageOfPreciseQuotas = sumOfPreciseInStarted / Basics.toFloat allGames,
+      averageOfRoundedQuotas = sumOfRoundedInStarted /// allGames,
       averageOverallInStarted = percentage gotAchievements startedAchievements,
       averageOverall = percentage gotAchievements allAchievements
       }
