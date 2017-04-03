@@ -1,17 +1,18 @@
 module Achievements exposing ( .. )
 
-import Html exposing             ( Html, div, input, text, button, h1, table, tr, td, progress, 
-                                   header, node )
-import Html.Attributes exposing  ( placeholder, autocomplete, rel, type_, href, id, class )
-import Html.Events exposing      ( onInput, onClick )
-import Http exposing             ( Error, send, get, Request, emptyBody )
-import Json.Decode exposing      ( at, int, field, string, list, map, map2 )
-import List exposing             ( length, foldr )
-import Task exposing             ( perform, sequence, Task )
-import Table exposing            ( State )
+import Html exposing              ( Html, div, input, text, button, h1, table, tr, td, progress, 
+                                    header, node )
+import Html.Attributes exposing   ( placeholder, autocomplete, rel, type_, href, id, class )
+import Html.Events exposing       ( onInput, onClick )
+import Html.Events.Extra exposing ( onEnter )
+import Http exposing              ( Error, send, get, Request, emptyBody )
+import Json.Decode exposing       ( at, int, field, string, list, map, map2 )
+import List exposing              ( length, foldr )
+import Task exposing              ( perform, sequence, Task )
+import Table exposing             ( State )
 
-import Auxiliaries exposing      ( catMaybes, truncateAt, (///), sumMap, unwords )
-import Duration exposing         ( Duration, toDuration, zero )
+import Auxiliaries exposing       ( catMaybes, truncateAt, (///), sumMap, unwords )
+import Duration exposing          ( Duration, toDuration, zero )
 
 main =
   Html.program
@@ -187,11 +188,11 @@ view model =
             [
           div [ id "keyField" ] 
               [
-                input [ autocomplete True, onInput Key ] []
+                input [ autocomplete True, onInput Key, onEnter Fetch ] []
               ],
           div [ id "userField" ]
               [
-                input [ autocomplete True, onInput User ] []
+                input [ autocomplete True, onInput User, onEnter Fetch ] []
               ],
           div [ id "fetchButton" ]
               [
@@ -245,16 +246,16 @@ view model =
               ["Achievements obtained:",                    toString stats.obtained],
               ["Achievements obtainable in started games:", toString stats.obtainableInStartedGames],
               ["Achievements obtainable overall",           toString stats.obtainableOverall],
-              ["Average of the exact completion rates in started games (CRPS):",
+              ["Average of the exact completion rates in started games (CRSP):",
+                                                            toString (truncate stats.averageOfPreciseQuotasStarted)],
+              ["Average of the rounded completion rates in started games (CRSR):",  
+                                                            toString (truncate stats.averageOfRoundedQuotasStarted)],
+              ["Average of the exact completion rates overall (CRTP):",
                                                             toString (truncate stats.averageOfPreciseQuotas)],
-              ["Average of the rounded completion rates in started games (CRRS):",  
+              ["Average of the rounded completion rates overall (CRTR):",  
                                                             toString (truncate stats.averageOfRoundedQuotas)],
-              ["Average of the exact completion rates overall (CRPT):",
-                                                            toString (truncate stats.averageOfPreciseQuotas)],
-              ["Average of the rounded completion rates overall (CRRT):",  
-                                                            toString (truncate stats.averageOfRoundedQuotas)],
-              ["Overall average in started games:",         toString (truncate stats.averageOverallInStarted)],
-              ["Overall average:",                          toString (truncate stats.averageOverall)]
+              ["Overall average in started games (QS):",    toString (truncate stats.averageOverallInStarted)],
+              ["Overall average (QT):",                     toString (truncate stats.averageOverall)]
             ]
             , input [ placeholder "Search by game title", onInput SetQuery ] []
             , div [ class "achievementTable" ] [ Table.view config model.tableState filteredGames ]
@@ -282,18 +283,18 @@ config = Table.config
       { toId = String.toLower << .name
       , toMsg = SetTableState
       , columns =
-          [ Table.stringColumn "Name"                       .name
-          , Table.intColumn    "Obtained"                   .obtained
-          , Table.intColumn    "Obtainable"                 .obtainable
-          , Table.floatColumn  "Exact quota"                (truncate << .preciseQuota) 
-          , Table.intColumn    "Rounded quota"              .discreteQuota
-          , Table.floatColumn  "\x0394 CR precise, started" (truncate << .changeInStartedCompletionRatesPrecise)
-          , Table.floatColumn  "\x0394 CR rounded, started" (truncate << .changeInStartedCompletionRatesRounded)
-          , Table.floatColumn  "\x0394 CR precise, all"     (truncate << .changeInOverallCompletionRatesPrecise)
-          , Table.floatColumn  "\x0394 CR rounded, all"     (truncate << .changeInOverallCompletionRatesRounded)
-          , Table.floatColumn  "\x0394 Q started"           (truncateAt 5 << .changeInStartedTotalQuota)
-          , Table.floatColumn  "\x0394 Q all"               (truncateAt 5 << .changeInTotalQuota)
-          , Table.stringColumn "Play time"                  (Duration.toString << Duration.toDuration << .timePlayed)
+          [ Table.stringColumn "Name"          .name
+          , Table.intColumn    "Obtained"      .obtained
+          , Table.intColumn    "Obtainable"    .obtainable
+          , Table.floatColumn  "Exact quota"   (truncate << .preciseQuota) 
+          , Table.intColumn    "Rounded quota" .discreteQuota
+          , Table.floatColumn  "\x0394 CRSP"   (truncate << .changeInStartedCompletionRatesPrecise)
+          , Table.floatColumn  "\x0394 CRSR"   (truncate << .changeInStartedCompletionRatesRounded)
+          , Table.floatColumn  "\x0394 CRTP"   (truncate << .changeInOverallCompletionRatesPrecise)
+          , Table.floatColumn  "\x0394 CRTR"   (truncate << .changeInOverallCompletionRatesRounded)
+          , Table.floatColumn  "\x0394 QS"     (truncateAt 5 << .changeInStartedTotalQuota)
+          , Table.floatColumn  "\x0394 QT"     (truncateAt 5 << .changeInTotalQuota)
+          , Table.stringColumn "Play time"     (Duration.toShortString << Duration.toDuration << .timePlayed)
           ]
       }
 
@@ -313,7 +314,7 @@ update msg model = case msg of
   Key key                      -> ({ model | key = key }, Cmd.none)
   Fetch                        -> ({ model | displayState = Loading }, fetchGames model.key model.user)
   FetchCollection (Err err)    -> ({ model | errorMsg = toString err }, Cmd.none)
-  FetchCollection (Ok (n, gs)) -> (model, processGames model.key model.user n gs)
+  FetchCollection (Ok (n, gs)) -> (model, processGames model.key model.user n (List.take 25 gs))
   Finished statistics          -> ({ model | statistics = statistics, displayState = Table }, Cmd.none)
   SetQuery q                   -> ({ model | nameQuery = q }, Cmd.none)
   SetTableState s              -> ({ model | tableState = s }, Cmd.none)
