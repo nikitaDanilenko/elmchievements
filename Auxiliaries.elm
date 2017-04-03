@@ -42,4 +42,4 @@ zip = zipWith (,)
 {- Flatten a list of words to a sentence by interspersing an empty space in between words and
    concatenating the result. -}
 unwords : List String -> String
-unwords = String.concat << List.intersperse " "
+unwords = String.join " "
