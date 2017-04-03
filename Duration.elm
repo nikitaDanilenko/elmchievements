@@ -9,12 +9,19 @@ type alias Duration = { hours : Int, minutes : Int }
 toDuration : Int -> Duration
 toDuration n = if (n < 0) then Duration 0 0 else Duration (n // 60) (n % 60)
 
+{- Pretty-print a string using the given names for minutes and hours. -}
+toStringWith : String -> String -> Duration -> String
+toStringWith hourName minuteName d =
+  unwords ([Basics.toString d.hours, hourName] 
+           ++ (if d.minutes == 0 then [] else [Basics.toString d.minutes, minuteName]))
+
+{- Pretty-pring a duration as a combination of hours and minutes, while abbreviating the units. -}
+toShortString : Duration -> String
+toShortString = toStringWith "h" "m"
+
 {- Pretty-print a duration as a combination of hours and minutes. -}
 toString : Duration -> String
-toString d = 
-  String.join " " 
-       ([Basics.toString d.hours, "hours"] 
-        ++ (if d.minutes == 0 then [] else [Basics.toString d.minutes, "minutes"]))
+toString = toStringWith "hours" "minutes"
 
 {- Pretty-print a duration as a combination of weeks, days, hours, and minutes.
    The reason we stop at "weeks" is that both months and years are no longer uniform
