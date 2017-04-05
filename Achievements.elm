@@ -1,8 +1,8 @@
 module Achievements exposing ( .. )
 
 import Html exposing              ( Html, div, input, text, button, h1, table, tr, td, progress, 
-                                    header, node )
-import Html.Attributes exposing   ( placeholder, autocomplete, rel, type_, href, id, class )
+                                    header, node, label, fieldset, a )
+import Html.Attributes exposing   ( placeholder, autocomplete, rel, type_, href, id, class, checked, href )
 import Html.Events exposing       ( onInput, onClick )
 import Html.Events.Extra exposing ( onEnter )
 import Http exposing              ( Error, send, get, Request, emptyBody )
@@ -39,7 +39,9 @@ type alias Model =
         statistics : Statistics,
         displayState : DisplayState,
         tableState : Table.State,
-        noAchievmentState : Table.State,
+        --noAchievmentState : Table.State,
+        showUnplayedGames : Bool,
+        showPerfectGames : Bool,
         nameQuery : String,
         errorMsg : String
     }
@@ -47,6 +49,7 @@ type alias Model =
 type alias Game = 
     {
         name : String,
+        steamID : Id,
         timePlayed : Int,
         obtained : Int,
         obtainable : Int
@@ -55,7 +58,9 @@ type alias Game =
 type alias Stats = 
   {
     -- Name of the game.
-    name : String,   
+    name : String,
+    -- The Steam "number" of the game.
+    steamID : Id,
     -- Number of obtained achievements.
     obtained : Int,
     -- Number of obtainable achievements.             
@@ -165,7 +170,9 @@ type Msg = User User         -- the user whose achievement stats are desired
          | Finished Statistics
          | SetQuery String
          | SetTableState Table.State
-         | SetNoAchievementState Table.State
+         | ToggleShowPerfect
+         | ToggleShowUnplayed
+         --| SetNoAchievementState Table.State
 
 initialModel : (Model, Cmd Msg)
 initialModel = ({
@@ -174,11 +181,20 @@ initialModel = ({
     statistics = emptyStatistics,
     displayState = Initial,
     tableState = Table.initialSort "Name",
-    noAchievmentState = Table.initialSort "Name",
+    --noAchievmentState = Table.initialSort "Name",
+    showUnplayedGames = True,
+    showPerfectGames = True,
     nameQuery = "",
     errorMsg =  ""
   }
   , Cmd.none)
+
+checkbox : List (Html.Attribute msg) -> msg -> String -> Html msg
+checkbox attrs msg name =
+  label []
+    [ input (List.concat [[ type_ "checkbox", onClick msg ], attrs]) []
+    , text name
+    ]
 
 view : Model -> Html Msg
 view model = 
@@ -212,7 +228,10 @@ view model =
       tableView : Model -> Html Msg
       tableView model =
         let lowerQuery = String.toLower model.nameQuery
-            filteredGames = List.filter (String.contains lowerQuery << String.toLower << .name) model.statistics.listOfStats
+            containsPredicate = String.contains lowerQuery << String.toLower << .name
+            removePerfect = if not model.showPerfectGames then \g -> g.obtainable /= g.obtained else always True 
+            removeUnplayed = if not model.showUnplayedGames then \g -> g.obtained > 0 else always True
+            filteredGames = List.filter (\g -> containsPredicate g && removeUnplayed g && removePerfect g) model.statistics.listOfStats
             
             toCell : String -> Html Msg
             toCell str = td [] [ text str ]
@@ -257,6 +276,9 @@ view model =
               ["Overall average in started games (QS):",    toString (truncate stats.averageOverallInStarted)],
               ["Overall average (QT):",                     toString (truncate stats.averageOverall)]
             ]
+            , fieldset [] [ checkbox [ checked model.showPerfectGames ] ToggleShowPerfect "Show perfect games"
+            , checkbox [ checked model.showUnplayedGames ] ToggleShowUnplayed "Show unstarted games"
+            ]
             , input [ placeholder "Search by game title", onInput SetQuery ] []
             , div [ class "achievementTable" ] [ Table.view config model.tableState filteredGames ]
             {- Currently, most games without achievements do not provide stats at all (not even their name!),
@@ -283,7 +305,11 @@ config = Table.config
       { toId = String.toLower << .name
       , toMsg = SetTableState
       , columns =
-          [ Table.stringColumn "Name"          .name
+          [ Table.veryCustomColumn { 
+              name     = "Name",
+              viewData = displayNamesAsLinks,
+              sorter   = Table.increasingOrDecreasingBy .name
+            }
           , Table.intColumn    "Obtained"      .obtained
           , Table.intColumn    "Obtainable"    .obtainable
           , Table.floatColumn  "Exact quota"   (truncate << .preciseQuota) 
@@ -298,15 +324,22 @@ config = Table.config
           ]
       }
 
-configNoAchievements : Table.Config Game Msg
-configNoAchievements = Table.config {
-    toId = String.toLower << .name,
-    toMsg = SetNoAchievementState,
-    columns = [
-      Table.stringColumn "Name" .name,
-      Table.stringColumn "Play time" (Duration.toString << Duration.toDuration << .timePlayed)
-    ]
+displayNamesAsLinks : Stats -> Table.HtmlDetails Msg
+displayNamesAsLinks stats = {
+    attributes = [ class "achievementTableLink" ],
+    children   = [ a [ href (String.concat [ "http://store.steampowered.com/app/", toString (stats.steamID) ]) ] 
+                     [ text stats.name ] ]
   }
+
+--configNoAchievements : Table.Config Game Msg
+--configNoAchievements = Table.config {
+--    toId = String.toLower << .name,
+--    toMsg = SetNoAchievementState,
+--    columns = [
+--      Table.stringColumn "Name" .name,
+--      Table.stringColumn "Play time" (Duration.toString << Duration.toDuration << .timePlayed)
+--    ]
+--  }
 
 update : Msg -> Model -> (Model, Cmd Msg)
 update msg model = case msg of 
@@ -314,11 +347,13 @@ update msg model = case msg of
   Key key                      -> ({ model | key = key }, Cmd.none)
   Fetch                        -> ({ model | displayState = Loading }, fetchGames model.key model.user)
   FetchCollection (Err err)    -> ({ model | errorMsg = toString err }, Cmd.none)
-  FetchCollection (Ok (n, gs)) -> (model, processGames model.key model.user n (List.take 25 gs))
+  FetchCollection (Ok (n, gs)) -> (model, processGames model.key model.user n gs)
   Finished statistics          -> ({ model | statistics = statistics, displayState = Table }, Cmd.none)
   SetQuery q                   -> ({ model | nameQuery = q }, Cmd.none)
   SetTableState s              -> ({ model | tableState = s }, Cmd.none)
-  SetNoAchievementState s      -> ({ model | noAchievmentState = s}, Cmd.none)
+  --SetNoAchievementState s      -> ({ model | noAchievmentState = s}, Cmd.none)
+  ToggleShowUnplayed           -> ({ model | showUnplayedGames = not (model.showUnplayedGames) }, Cmd.none)
+  ToggleShowPerfect            -> ({ model | showPerfectGames = not (model.showPerfectGames) }, Cmd.none)
 
 {- Fetch the games associated with the given user (using the supplied key).
    The resulting request is then passed on for further processing to fetch the individual game statistics. -}
@@ -355,7 +390,14 @@ preprocessGames key user gs =
               Http.toTask gameName
                 |> Task.andThen (\name -> Task.onError (always (Task.succeed 0)) (Http.toTask (fetchAchievementNumber key gameId))
                   |> Task.andThen (\achNumber -> Task.onError (always (Task.succeed 0)) (Http.toTask gameAchieved)
-                    |> Task.andThen (\achieved -> Task.succeed (Just (Game name time achieved achNumber))
+                    |> Task.andThen (\achieved -> Task.succeed (Just { 
+                            name       = name,
+                            steamID    = gameId,
+                            timePlayed = time,
+                            obtained   = achieved,
+                            obtainable = achNumber 
+                          }
+                        )
                       )
                     ) 
                   )
@@ -429,6 +471,7 @@ createStats allGames playedGames overallDuration gs gamesWithoutAchievements =
         let f game = 
           let exactQuota = percentage game.obtained game.obtainable
           in { name = game.name,
+               steamID = game.steamID,
                obtained = game.obtained,
                obtainable = game.obtainable, 
                preciseQuota = exactQuota,
