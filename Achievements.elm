@@ -203,12 +203,13 @@ view model =
         div [ id "initialMain" ] 
             [
           div [ id "keyField" ] 
-              [
-                input [ autocomplete True, onInput Key, onEnter Fetch ] []
+              [   text "Steam API Key"
+                , input [ autocomplete True, onInput Key, onEnter Fetch ] []
               ],
           div [ id "userField" ]
               [
-                input [ autocomplete True, onInput User, onEnter Fetch ] []
+                  text "Steam ID"
+                , input [ autocomplete True, onInput User, onEnter Fetch ] []
               ],
           div [ id "fetchButton" ]
               [
@@ -258,13 +259,14 @@ view model =
                                                                 Duration.toString stats.timeWithAchievements,
                                                                 String.concat ["(", Duration.toFullString stats.timeWithAchievements, ")"]
                                                             ]],
-              ["Play time in games started achievements:",  unwords [
+              ["Play time in games with at least one achievement:",  
+                                                            unwords [
                                                                 Duration.toString stats.timeWithStartedAchievements,
                                                                 String.concat ["(", Duration.toFullString stats.timeWithStartedAchievements, ")"]
                                                             ]],
               ["Achievements obtained:",                    toString stats.obtained],
               ["Achievements obtainable in started games:", toString stats.obtainableInStartedGames],
-              ["Achievements obtainable overall",           toString stats.obtainableOverall],
+              ["Achievements obtainable overall:",          toString stats.obtainableOverall],
               ["Average of the exact completion rates in started games (CRSP):",
                                                             toString (truncate stats.averageOfPreciseQuotasStarted)],
               ["Average of the rounded completion rates in started games (CRSR):",  
@@ -318,9 +320,14 @@ config = Table.config
           , Table.floatColumn  "\x0394 CRSR"   (truncate << .changeInStartedCompletionRatesRounded)
           , Table.floatColumn  "\x0394 CRTP"   (truncate << .changeInOverallCompletionRatesPrecise)
           , Table.floatColumn  "\x0394 CRTR"   (truncate << .changeInOverallCompletionRatesRounded)
-          , Table.floatColumn  "\x0394 QS"     (truncateAt 5 << .changeInStartedTotalQuota)
-          , Table.floatColumn  "\x0394 QT"     (truncateAt 5 << .changeInTotalQuota)
-          , Table.stringColumn "Play time"     (Duration.toShortString << Duration.toDuration << .timePlayed)
+          , Table.floatColumn  "\x0394 QS"     (truncateAt 4 << .changeInStartedTotalQuota)
+          , Table.floatColumn  "\x0394 QT"     (truncateAt 4 << .changeInTotalQuota)
+          , Table.customColumn {
+              name     = "Play time",
+              viewData = Duration.toShortString << Duration.toDuration << .timePlayed,
+              sorter   = Table.increasingOrDecreasingBy .timePlayed
+            }
+             --Table.stringColumn "Play time"     (Duration.toShortString << Duration.toDuration << .timePlayed)
           ]
       }
 
@@ -413,8 +420,9 @@ processGames key user n gs =
 {- Given a list of games, this function computes the metadata of interest. -}
 createStats : Int -> Int -> Duration -> List Game -> List Game -> Statistics
 createStats allGames playedGames overallDuration gs gamesWithoutAchievements =
-  let startedGames       = List.filter (((<) 0) << .obtained) gs
-      startedGamesLength = List.length startedGames
+  let startedGames          = List.filter (((<) 0) << .obtained) gs
+      startedGamesLength    = List.length startedGames
+      gamesWithAchievements = List.length gs
 
       preciseInStarted = List.map (\g -> percentage g.obtained g.obtainable) startedGames
       sumOfPreciseInStarted = List.sum preciseInStarted
@@ -435,16 +443,14 @@ createStats allGames playedGames overallDuration gs gamesWithoutAchievements =
       {- Compute by how much the overall completion percentage would be changed
          if an additional achievement was achieved. Note that the resulting number
          can be zero (got all achievements already) or even negative (no achievements yet). -}
-      change : (Int -> Int -> Int) -> Int -> Int -> Float -> Float
-      change mkNewNumber have want sumOfPreviousQuotas = 
+      change : (Int -> Int -> Int) -> Int -> Int -> Int -> Float -> Float
+      change mkNewNumber have want gamesTotal sumOfPreviousQuotas = 
         if (have >= want) then 0
-        else let gameNumber = Basics.toFloat (mkNewNumber have startedGamesLength)
-             in (sgl
-                    * 
-                      (sumOfPreviousQuotas + percentage 1 want) 
-                      - gameNumber * sumOfPreviousQuotas) 
-                  / (gameNumber * sgl)
-
+        else let gameNumber = Basics.toFloat (mkNewNumber have gamesTotal)
+             in ((sumOfPreviousQuotas + percentage 1 want) / gameNumber) 
+                - 
+                (sumOfPreviousQuotas / Basics.toFloat gamesTotal)
+          
       changeTotalQuota : Bool -> Int -> Int -> Int -> Int -> Float
       changeTotalQuota overall have want allHave allWant = 
         let currentQuota = allHave /// allWant
@@ -464,22 +470,21 @@ createStats allGames playedGames overallDuration gs gamesWithoutAchievements =
 
       {- Collect and compute the information that is available per game already.
          The result is basically a GameStats, but the improvement value in case
-         you make a single achievement more is missing.
-        -}
+         you make a single achievement more is missing. -}
       mkStats : List Game -> List Stats
       mkStats = 
         let f game = 
           let exactQuota = percentage game.obtained game.obtainable
-          in { name = game.name,
-               steamID = game.steamID,
-               obtained = game.obtained,
-               obtainable = game.obtainable, 
-               preciseQuota = exactQuota,
-               discreteQuota = Basics.round exactQuota,
-               changeInStartedCompletionRatesPrecise = change changeGameSize game.obtained game.obtainable sumOfPreciseInStarted,
-               changeInStartedCompletionRatesRounded = change changeGameSize game.obtained game.obtainable (Basics.toFloat sumOfRoundedInStarted),
-               changeInOverallCompletionRatesPrecise = change ignoreProgress game.obtained game.obtainable sumOfPreciseInStarted,
-               changeInOverallCompletionRatesRounded = change ignoreProgress game.obtained game.obtainable (Basics.toFloat sumOfRoundedInStarted),
+          in { name                                  = game.name,
+               steamID                               = game.steamID,
+               obtained                              = game.obtained,
+               obtainable                            = game.obtainable, 
+               preciseQuota                          = exactQuota,
+               discreteQuota                         = Basics.round exactQuota,
+               changeInStartedCompletionRatesPrecise = change changeGameSize game.obtained game.obtainable startedGamesLength sumOfPreciseInStarted,
+               changeInStartedCompletionRatesRounded = change changeGameSize game.obtained game.obtainable startedGamesLength (Basics.toFloat sumOfRoundedInStarted),
+               changeInOverallCompletionRatesPrecise = change ignoreProgress game.obtained game.obtainable gamesWithAchievements sumOfPreciseInStarted,
+               changeInOverallCompletionRatesRounded = change ignoreProgress game.obtained game.obtainable gamesWithAchievements (Basics.toFloat sumOfRoundedInStarted),
                changeInStartedTotalQuota             = changeTotalQuota False game.obtained game.obtainable obtainedOverall obtainableInStarted,
                changeInTotalQuota                    = changeTotalQuota True  game.obtained game.obtainable obtainedOverall obtainableOverall,
                timePlayed = game.timePlayed
@@ -497,25 +502,25 @@ createStats allGames playedGames overallDuration gs gamesWithoutAchievements =
       minutes             = sumMap .timePlayed gs
 
   in  { 
-      listOfStats = allStats,
-      listOfGamesWithoutAchievements = gamesWithoutAchievements,
-      numberOfGamesTotal = allGames,
-      numberOfPlayedGames = playedGames,
-      numberOfGamesWithAchievements = List.length allStats,
+      listOfStats                          = allStats,
+      listOfGamesWithoutAchievements       = gamesWithoutAchievements,
+      numberOfGamesTotal                   = allGames,
+      numberOfPlayedGames                  = playedGames,
+      numberOfGamesWithAchievements        = gamesWithAchievements,
       numberOfStartedGamesWithAchievements = startedGamesLength,
-      numberOfPerfectGames = List.length (List.filter (\s -> s.obtained == s.obtainable) startedStats),
-      timeOverall = overallDuration,
-      timeWithAchievements = Duration.toDuration (sumMap .timePlayed gs),
-      timeWithStartedAchievements = Duration.toDuration (sumMap .timePlayed startedStats),
-      obtained = gotAchievements,
-      obtainableInStartedGames = startedAchievements,
-      obtainableOverall = sumMap .obtainable gs,
-      averageOfPreciseQuotasStarted = exactProgresses / Basics.toFloat startedGamesLength,
-      averageOfRoundedQuotasStarted = roundedProgresses /// startedGamesLength,
-      averageOfPreciseQuotas = sumOfPreciseInStarted / Basics.toFloat allGames,
-      averageOfRoundedQuotas = sumOfRoundedInStarted /// allGames,
-      averageOverallInStarted = percentage gotAchievements startedAchievements,
-      averageOverall = percentage gotAchievements allAchievements
+      numberOfPerfectGames                 = List.length (List.filter (\s -> s.obtained == s.obtainable) startedStats),
+      timeOverall                          = overallDuration,
+      timeWithAchievements                 = Duration.toDuration (sumMap .timePlayed gs),
+      timeWithStartedAchievements          = Duration.toDuration (sumMap .timePlayed startedStats),
+      obtained                             = gotAchievements,
+      obtainableInStartedGames             = startedAchievements,
+      obtainableOverall                    = sumMap .obtainable gs,
+      averageOfPreciseQuotasStarted        = exactProgresses / Basics.toFloat startedGamesLength,
+      averageOfRoundedQuotasStarted        = roundedProgresses /// startedGamesLength,
+      averageOfPreciseQuotas               = sumOfPreciseInStarted / Basics.toFloat allGames,
+      averageOfRoundedQuotas               = sumOfRoundedInStarted /// allGames,
+      averageOverallInStarted              = percentage gotAchievements startedAchievements,
+      averageOverall                       = percentage gotAchievements allAchievements
       }
 
 -- The precision with which the achievement quotas are computed.
