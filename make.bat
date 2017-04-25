@@ -1,0 +1,1 @@
+elm-make Achievements.elm --output=Achievements.html
