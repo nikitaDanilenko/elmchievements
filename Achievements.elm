@@ -8,17 +8,19 @@ import Html.Events.Extra exposing ( onEnter )
 import Http exposing              ( Error, send, get, Request, emptyBody )
 import Json.Decode exposing       ( at, int, field, string, list, map, map2 )
 import List exposing              ( length, foldr )
+import Navigation
 import Task exposing              ( perform, sequence, Task )
 import Table exposing             ( State )
 
 import Auxiliaries exposing       ( catMaybes, truncateAt, (///), sumMap, unwords )
 import Duration exposing          ( Duration, toDuration, zero )
 
+main : Program Never Model Msg
 main =
-  Html.program
-    { init = initialModel
-    , view = view
-    , update = update
+  Navigation.program (\_ -> Fetch)
+    { init          = initialModel
+    , view          = view
+    , update        = update
     , subscriptions = \_ -> Sub.none
     }
 
@@ -43,7 +45,8 @@ type alias Model =
         showUnplayedGames : Bool,
         showPerfectGames : Bool,
         nameQuery : String,
-        errorMsg : String
+        errorMsg : String,
+        pageLocation : Navigation.Location
     }
 
 type alias Game = 
@@ -174,8 +177,8 @@ type Msg = User User         -- the user whose achievement stats are desired
          | ToggleShowUnplayed
          --| SetNoAchievementState Table.State
 
-initialModel : (Model, Cmd Msg)
-initialModel = ({
+initialModel : Navigation.Location -> (Model, Cmd Msg)
+initialModel location = ({
     key = "",
     user = "",
     statistics = emptyStatistics,
@@ -185,7 +188,8 @@ initialModel = ({
     showUnplayedGames = True,
     showPerfectGames = True,
     nameQuery = "",
-    errorMsg =  ""
+    errorMsg =  "",
+    pageLocation = location
   }
   , Cmd.none)
 
