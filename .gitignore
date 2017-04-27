@@ -1,4 +1,24 @@
 # elm-package generated files
 elm-stuff/
+
 # elm-repl generated files
 repl-temp-*
+
+# modules the project depends on
+node_modules/
+npm-debug.log
+
+# html-files
+*.html
+*.htm
+
+# Keyfile (for security reasons)
+keyfile.txt
+
+# Notes and Todos
+notes.txt
+Todo.txt
+setup.md
+
+# Reverse proxy starter (does not actually belong to the project)
+startup.bat
