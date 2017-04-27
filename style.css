@@ -12,8 +12,30 @@ body {
 	/*padding: 5px;*/
 }
 
+
+.button {
+ position: fixed; /* or absolute */
+    top: 60%;
+    left: 50.25%;
+	transform: translate(-50%, -50%);
+	}
+
+#keyField {
+	position: fixed; /* or absolute */
+    top: 41%;
+    left: 50%;
+	transform: translate(-50%, -50%);
+	}
+
+#userField {
+	position: fixed; /* or absolute */
+    top: 50%;
+    left: 50%;
+	transform: translate(-50%, -50%);
+	}
+	
 input, .button, #keyField, #userField {
-	font-size: 16px;
+   	font-size: 16px;
 	color: rgb(250, 250, 250);
 	width: 350px;
 	border: 0px none black;
@@ -23,6 +45,14 @@ input, .button, #keyField, #userField {
 	margin-left: auto;
 	margin-right: auto;*/
 }
+
+
+#loadingMain {
+	position: fixed; /* or absolute */
+    top: 50%;
+    left: 50%;
+	transform: translate(-50%, -50%);
+	}
 
 #initialMain {
 	/*height: 35em;*/
