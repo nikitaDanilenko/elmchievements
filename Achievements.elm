@@ -17,7 +17,7 @@ import Duration exposing          ( Duration, toDuration, zero )
 
 main : Program Never Model Msg
 main =
-  Navigation.program (\_ -> Fetch)
+  Navigation.program (always LocationChange)
     { init          = initialModel
     , view          = view
     , update        = update
@@ -175,6 +175,7 @@ type Msg = User User         -- the user whose achievement stats are desired
          | SetTableState Table.State
          | ToggleShowPerfect
          | ToggleShowUnplayed
+         | LocationChange
          --| SetNoAchievementState Table.State
 
 initialModel : Navigation.Location -> (Model, Cmd Msg)
@@ -358,14 +359,16 @@ update msg model = case msg of
   Key key                      -> ({ model | key = key }, Cmd.none)
   Fetch                        -> ({ model | displayState = Loading }, fetchGames model.key model.user)
   FetchCollection (Err err)    -> ({ model | errorMsg = toString err }, Cmd.none)
-  FetchCollection (Ok (n, gs)) -> (model, processGames model.key model.user n gs)
-  --FetchCollection (Ok (n, gs)) -> (model, processGames model.key model.user n (List.take 25 gs))
-  Finished statistics          -> ({ model | statistics = statistics, displayState = Table }, Cmd.none)
+  --FetchCollection (Ok (n, gs)) -> (model, processGames model.key model.user n gs)
+  FetchCollection (Ok (n, gs)) -> (model, processGames model.key model.user n (List.take 25 gs))
+  Finished statistics          -> ({ model | statistics = statistics, displayState = Table }, 
+                                    Navigation.newUrl "")
   SetQuery q                   -> ({ model | nameQuery = q }, Cmd.none)
   SetTableState s              -> ({ model | tableState = s }, Cmd.none)
   --SetNoAchievementState s      -> ({ model | noAchievmentState = s}, Cmd.none)
   ToggleShowUnplayed           -> ({ model | showUnplayedGames = not (model.showUnplayedGames) }, Cmd.none)
   ToggleShowPerfect            -> ({ model | showPerfectGames = not (model.showPerfectGames) }, Cmd.none)
+  LocationChange               -> (model, Cmd.none)
 
 {- Fetch the games associated with the given user (using the supplied key).
    The resulting request is then passed on for further processing to fetch the individual game statistics. -}
