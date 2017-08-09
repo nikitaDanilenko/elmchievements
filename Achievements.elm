@@ -359,8 +359,8 @@ update msg model = case msg of
   Key key                      -> ({ model | key = key }, Cmd.none)
   Fetch                        -> ({ model | displayState = Loading }, fetchGames model.key model.user)
   FetchCollection (Err err)    -> ({ model | errorMsg = toString err }, Cmd.none)
-  --FetchCollection (Ok (n, gs)) -> (model, processGames model.key model.user n gs)
-  FetchCollection (Ok (n, gs)) -> (model, processGames model.key model.user n (List.take 25 gs))
+  FetchCollection (Ok (n, gs)) -> (model, processGames model.key model.user n gs)
+  --FetchCollection (Ok (n, gs)) -> (model, processGames model.key model.user n (List.take 25 gs))
   Finished statistics          -> ({ model | statistics = statistics, displayState = Table }, 
                                     Navigation.newUrl "")
   SetQuery q                   -> ({ model | nameQuery = q }, Cmd.none)
