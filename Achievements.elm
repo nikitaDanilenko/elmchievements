@@ -41,7 +41,7 @@ type alias Model =
         statistics : Statistics,
         displayState : DisplayState,
         tableState : Table.State,
-        --noAchievmentState : Table.State,
+        --noAchievementState : Table.State,
         showUnplayedGames : Bool,
         showPerfectGames : Bool,
         nameQuery : String,
@@ -185,7 +185,7 @@ initialModel location = ({
     statistics = emptyStatistics,
     displayState = Initial,
     tableState = Table.initialSort "Name",
-    --noAchievmentState = Table.initialSort "Name",
+    --noAchievementState = Table.initialSort "Name",
     showUnplayedGames = True,
     showPerfectGames = True,
     nameQuery = "",
@@ -290,7 +290,7 @@ view model =
             , div [ class "achievementTable" ] [ Table.view config model.tableState filteredGames ]
             {- Currently, most games without achievements do not provide stats at all (not even their name!),
                which is why we omit this table for now. -}
-            --, Table.view configNoAchievements model.noAchievmentState stats.listOfGamesWithoutAchievements
+            --, Table.view configNoAchievements model.noAchievementState stats.listOfGamesWithoutAchievements
             ]
 
       currentView = case model.displayState of 
@@ -365,7 +365,7 @@ update msg model = case msg of
                                     Navigation.newUrl "")
   SetQuery q                   -> ({ model | nameQuery = q }, Cmd.none)
   SetTableState s              -> ({ model | tableState = s }, Cmd.none)
-  --SetNoAchievementState s      -> ({ model | noAchievmentState = s}, Cmd.none)
+  --SetNoAchievementState s      -> ({ model | noAchievementState = s}, Cmd.none)
   ToggleShowUnplayed           -> ({ model | showUnplayedGames = not (model.showUnplayedGames) }, Cmd.none)
   ToggleShowPerfect            -> ({ model | showPerfectGames = not (model.showPerfectGames) }, Cmd.none)
   LocationChange               -> (model, Cmd.none)
